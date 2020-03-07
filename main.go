@@ -119,7 +119,7 @@ func main() {
 	} else {
 		release, _, err := client.Repositories.CreateRelease(ctx, owner, repo, &github.RepositoryRelease{
 			TagName:         &name,
-			TargetCommitish: &start,
+			TargetCommitish: &end,
 			Name:            &name,
 			Body:            &body,
 		})
