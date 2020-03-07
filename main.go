@@ -17,9 +17,10 @@ import (
 )
 
 var (
-	start, end, owner, repo, token string
-	pullRequestRe                  = regexp.MustCompile(`Merge pull request #(\d+)`)
-	ticketRe                       = regexp.MustCompile(`(?:WKS|PSD)-(?:\d+)`)
+	start, end, owner, repo, token, jira, regex string
+	pullRequestRe                               = regexp.MustCompile(`Merge pull request #(\d+)`)
+	ticketRe                                    *regexp.Regexp
+	dryRun                                      bool
 )
 
 func ensure(values ...string) {
@@ -38,8 +39,16 @@ func init() {
 	flag.StringVar(&owner, "owner", env.StringDefault("SCRIBE_OWNER", ""), "The repository owner")
 	flag.StringVar(&repo, "repo", env.StringDefault("SCRIBE_REPO", ""), "The repository name")
 	flag.StringVar(&token, "token", env.StringDefault("SCRIBE_TOKEN", ""), "Access token")
+	flag.StringVar(&jira, "jira", env.StringDefault("SCRIBE_JIRA", ""), "The JIRA host to link issues to")
+	flag.StringVar(&regex, "regex", env.StringDefault("SCRIBE_REGEX", ""), "The JIRA project key regex to use (like ABC|BSD")
+	flag.BoolVar(&dryRun, "dryrun", false, "Do a dry run (do not create a release, just print it")
 	flag.Parse()
-	ensure(start, end, owner, repo, token)
+	ensure(start, end, owner, repo, token, jira, regex)
+	re, err := regexp.Compile(fmt.Sprintf(`(?:%s)-(?:\d+)`, regex))
+	if err != nil {
+		log.Fatalf("regex was invalid: %s", err)
+	}
+	ticketRe = re
 }
 
 func parsePullRequestNumber(message string) string {
@@ -93,7 +102,7 @@ func main() {
 				log.Fatalf("failed getting pull request: %s", err)
 			}
 			title := ticketRe.ReplaceAllStringFunc(*pr.Title, func(ticket string) string {
-				return fmt.Sprintf("[%s](https://weknowtraining.atlassian.net/browse/%s)", ticket, ticket)
+				return fmt.Sprintf("[%s](https://%s/browse/%s)", ticket, jira, ticket)
 			})
 			lines <- fmt.Sprintf("- %s #%d", title, id)
 		}
@@ -105,14 +114,18 @@ func main() {
 	}
 	body := strings.Join(bodyLines, "\n")
 	name := makeReleaseName()
-	release, _, err := client.Repositories.CreateRelease(ctx, owner, repo, &github.RepositoryRelease{
-		TagName:         &name,
-		TargetCommitish: &start,
-		Name:            &name,
-		Body:            &body,
-	})
-	if err != nil {
-		log.Fatalf("failed creating release: %s", err)
+	if dryRun {
+		log.Printf("dry run\n%s\n\n%s", name, body)
+	} else {
+		release, _, err := client.Repositories.CreateRelease(ctx, owner, repo, &github.RepositoryRelease{
+			TagName:         &name,
+			TargetCommitish: &start,
+			Name:            &name,
+			Body:            &body,
+		})
+		if err != nil {
+			log.Fatalf("failed creating release: %s", err)
+		}
+		log.Printf("created release %s", *release.Name)
 	}
-	log.Printf("created release %s", *release.Name)
 }
